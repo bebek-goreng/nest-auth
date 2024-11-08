@@ -5,6 +5,7 @@ import { AppModule } from '../src/app.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { User, UserSchema } from '../src/auth/schema/user.schema';
 import { Model } from 'mongoose';
+import * as bcrypt from 'bcrypt-nodejs';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication;
@@ -25,10 +26,14 @@ describe('AppController (e2e)', () => {
     userModel = moduleFixture.get<Model<User>>('UserModel');
   });
 
+  afterAll(async () => {
+    await app.close();
+  });
+
   describe('POST /api/auth/signup', () => {
 
     it('should reject signup user with invalid email and invalid password length', async () => {
-      const responseTest = await request(app.getHttpServer())
+      const response = await request(app.getHttpServer())
         .post('/api/auth/signup')
         .send({
           name: 'test',
@@ -36,31 +41,102 @@ describe('AppController (e2e)', () => {
           password: 'test'
         })
 
-      expect(responseTest.status).toBe(400);
-      expect(responseTest.body.message).toEqual(
+      expect(response.status).toBe(400);
+      expect(response.body.message).toEqual(
         expect.arrayContaining(['Please enter correct email'])
       );
-      expect(responseTest.body.error).toBe('Bad Request');
+      expect(response.body.error).toBe('Bad Request');
     });
+
+    it('should create new user and return jwt token', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/signup')
+        .send({
+          name: 'test',
+          email: 'test@mail.com',
+          password: 'password'
+        })
+
+      expect(response.body.token).toBeDefined();
+    });
+
+    it('should reject user with email when already registered', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/signup')
+        .send({
+          name: 'test',
+          email: 'test@mail.com',
+          password: 'password'
+        })
+
+      expect(response.statusCode).toBe(400);
+      expect(response.body.message).toBe('Email already registered');
+    });
+
+    afterAll(async () => {
+      await userModel.deleteMany({
+        name: 'test'
+      });
+    });
+
   });
 
-  it('should create new user and return jwt token', async () => {
-    const response = await request(app.getHttpServer())
-      .post('/api/auth/signup')
-      .send({
+
+
+  describe('POST /api/auth/signin', () => {
+    beforeAll(async () => {
+      const salt = bcrypt.genSaltSync(10);
+      const hashPassword = bcrypt.hashSync('password', salt);
+
+      const user = await userModel.create({
         name: 'test',
         email: 'test@mail.com',
-        password: 'password'
-      })
-
-    expect(response.body.token).toBeDefined();
-  });
-
-  afterAll(async () => {
-    await userModel.deleteMany({
-      name: 'test'
+        password: hashPassword
+      });
     });
 
-    await app.close();
+    it('should reject user with invalid email', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/signin')
+        .send({
+          email: 'test2@mail.com',
+          password: 'password'
+        })
+
+      expect(response.statusCode).toBe(401);
+      expect(response.body.message).toBe('Invalid Credentials');
+      expect(response.body.error).toBe('Unauthorized');
+    });
+
+    it('should reject user with invalid password', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/signin')
+        .send({
+          email: 'test@mail.com',
+          password: '12345678'
+        })
+
+      expect(response.body.statusCode).toBe(401);
+      expect(response.body.message).toBe('Invalid Credentials');
+      expect(response.body.error).toBe('Unauthorized');
+    });
+
+    it('should login a user with correct email and password', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/api/auth/signin')
+        .send({
+          email: 'test@mail.com',
+          password: 'password'
+        })
+
+      expect(response.body.token).toBeDefined();
+    });
+
+    afterAll(async () => {
+      await userModel.deleteMany({
+        name: 'test'
+      });
+    });
+    
   });
 });
